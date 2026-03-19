@@ -21,13 +21,19 @@ def solve_mta(model, inputs, args):
     
     batch_size = image_features.shape[0]
     
-    # bandwidth
+    # Coarse-to-fine bandwidth schedule
+    # Calculate base bandwidth from k-nearest neighbor distances
     dist = torch.cdist(image_features, image_features)
     sorted_dist, _ = torch.sort(dist, dim=1)
     k = int(0.3 * (image_features.shape[0]-1))
     selected_distances = sorted_dist[:, 1:k+1]**2  # exclude the distance to the point itself 
     mean_distance = torch.mean(selected_distances, dim=1)
-    bandwidth = torch.sqrt(0.5 * mean_distance) 
+    base_bandwidth = torch.sqrt(0.5 * mean_distance)
+    
+    # Bandwidth schedule: start with larger bandwidth, progressively reduce
+    # Initial multiplier (coarse stage) and final multiplier (fine stage)
+    bandwidth_init_scale = 2.0  # Start with 2x the base bandwidth (coarse)
+    bandwidth_final_scale = 0.8  # End with 0.8x the base bandwidth (fine)
     
     # Affinity matrix based on logits
     affinity_matrix = (logits/temperature).softmax(1) @ (logits/temperature).softmax(1).t()
@@ -44,6 +50,10 @@ def solve_mta(model, inputs, args):
     iter = 0
     
     while not convergence:
+        # Coarse-to-fine bandwidth schedule: linear decay from init_scale to final_scale
+        progress = min(iter / (max_iter - 1), 1.0) if max_iter > 1 else 1.0
+        bandwidth_scale = bandwidth_init_scale + progress * (bandwidth_final_scale - bandwidth_init_scale)
+        bandwidth = base_bandwidth * bandwidth_scale
         
         ###################
         # Inlierness step #
