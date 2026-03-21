@@ -1,9 +1,20 @@
 import torch
 import torch.nn.functional as F 
 
-def gaussian_kernel(mu, bandwidth, datapoints):
-    dist = torch.norm(datapoints - mu,dim=-1, p=2)
-    density = torch.exp(-dist**2/(2*bandwidth**2))
+def von_mises_fisher_kernel(mu, kappa, datapoints):
+    """
+    von Mises-Fisher kernel - the natural distribution for normalized embeddings
+    on a hypersphere (like CLIP features). Equivalent to Gaussian for directional data.
+
+    Args:
+        mu: mode/center on the hypersphere (normalized)
+        kappa: concentration parameter (higher = more peaked, analogous to 1/bandwidth^2)
+        datapoints: normalized feature vectors
+    """
+    # Cosine similarity (dot product of normalized vectors)
+    cos_sim = torch.sum(mu * datapoints, dim=-1)
+    # vMF density (proportional to exp(kappa * cos_sim))
+    density = torch.exp(kappa * (cos_sim - 1))  # subtract 1 for numerical stability
     return density
 
 
@@ -21,13 +32,15 @@ def solve_mta(model, inputs, args):
     
     batch_size = image_features.shape[0]
     
-    # bandwidth
+    # Concentration parameter (kappa) for von Mises-Fisher kernel
+    # For normalized vectors: ||a-b||^2 = 2(1-cos(a,b)), so kappa ~ 1/bandwidth^2
     dist = torch.cdist(image_features, image_features)
     sorted_dist, _ = torch.sort(dist, dim=1)
     k = int(0.3 * (image_features.shape[0]-1))
-    selected_distances = sorted_dist[:, 1:k+1]**2  # exclude the distance to the point itself 
+    selected_distances = sorted_dist[:, 1:k+1]**2  # exclude the distance to the point itself
     mean_distance = torch.mean(selected_distances, dim=1)
-    bandwidth = torch.sqrt(0.5 * mean_distance) 
+    bandwidth = torch.sqrt(0.5 * mean_distance)
+    kappa = 1.0 / (bandwidth**2 + 1e-8)  # concentration parameter 
     
     # Affinity matrix based on logits
     affinity_matrix = (logits/temperature).softmax(1) @ (logits/temperature).softmax(1).t()
@@ -49,7 +62,7 @@ def solve_mta(model, inputs, args):
         # Inlierness step #
         ###################
         
-        density = gaussian_kernel(mode, bandwidth, image_features)
+        density = von_mises_fisher_kernel(mode, kappa, image_features)
     
         convergence_inlierness = False
         i = 0
@@ -71,7 +84,7 @@ def solve_mta(model, inputs, args):
         while not convergence_mode:
             i+=1
             old_mode = mode
-            density = gaussian_kernel(mode, bandwidth, image_features)
+            density = von_mises_fisher_kernel(mode, kappa, image_features)
             weighted_density = density *  y
             mode = torch.sum(weighted_density.unsqueeze(1)* image_features, dim=0)/torch.sum(weighted_density)
             mode /= mode.norm(p=2, dim=-1)
