@@ -32,8 +32,9 @@ def solve_mta(model, inputs, args):
     
     # Bandwidth schedule: start with larger bandwidth, progressively reduce
     # Initial multiplier (coarse stage) and final multiplier (fine stage)
-    bandwidth_init_scale = 2.0  # Start with 2x the base bandwidth (coarse)
-    bandwidth_final_scale = 0.8  # End with 0.8x the base bandwidth (fine)
+    # Read values from args when provided, preserve previous defaults otherwise
+    bandwidth_init_scale = getattr(args, 'bandwidth_init_scale', 2.0)
+    bandwidth_final_scale = getattr(args, 'bandwidth_final_scale', 0.8)
     
     # Affinity matrix based on logits
     affinity_matrix = (logits/temperature).softmax(1) @ (logits/temperature).softmax(1).t()
@@ -50,9 +51,34 @@ def solve_mta(model, inputs, args):
     iter = 0
     
     while not convergence:
-        # Coarse-to-fine bandwidth schedule: linear decay from init_scale to final_scale
+        # Coarse-to-fine bandwidth schedule: support multiple decay types.
+        # By default use exponential (geometric) interpolation between init and final scales.
+        # You can set `args.bandwidth_schedule` to one of: 'exponential' (default), 'linear', 'cosine', 'inverse'.
+        decay_type = getattr(args, 'bandwidth_schedule', 'exponential')
         progress = min(iter / (max_iter - 1), 1.0) if max_iter > 1 else 1.0
-        bandwidth_scale = bandwidth_init_scale + progress * (bandwidth_final_scale - bandwidth_init_scale)
+
+        if decay_type == 'linear':
+            # linear interpolation between init and final scales
+            bandwidth_scale = bandwidth_init_scale + progress * (bandwidth_final_scale - bandwidth_init_scale)
+        elif decay_type == 'exponential':
+            # geometric interpolation (smooth exponential-like decay)
+            # bandwidth_scale = init * (final/init) ** progress
+            if bandwidth_init_scale == 0:
+                bandwidth_scale = bandwidth_final_scale
+            else:
+                bandwidth_scale = bandwidth_init_scale * (bandwidth_final_scale / bandwidth_init_scale) ** progress
+        elif decay_type == 'cosine':
+            # cosine annealing between init and final
+            import math
+            bandwidth_scale = bandwidth_final_scale + 0.5 * (bandwidth_init_scale - bandwidth_final_scale) * (1 + math.cos(math.pi * progress))
+        elif decay_type == 'inverse':
+            # inverse schedule: quick initial change then slow approach to final
+            # using 10 as a shape parameter (larger -> steeper initial drop)
+            bandwidth_scale = bandwidth_final_scale + (bandwidth_init_scale - bandwidth_final_scale) * (1.0 / (1.0 + 10.0 * progress))
+        else:
+            # fallback to linear if unknown string
+            bandwidth_scale = bandwidth_init_scale + progress * (bandwidth_final_scale - bandwidth_init_scale)
+
         bandwidth = base_bandwidth * bandwidth_scale
         
         ###################

@@ -345,5 +345,12 @@ if __name__ == '__main__':
     parser.add_argument('--mta', action='store_true', default=False, help='run meanshift test-time adaptation (MTA)')
     parser.add_argument('--lambda_q', default=4, help='quadratic term weighting factor')
     parser.add_argument('--lambda_y', default=0.2, help='entropic term weighting factor')
+    # Bandwidth schedule for MTA (choices: exponential, linear, cosine, inverse)
+    parser.add_argument('--bandwidth_schedule', default='exponential', type=str,
+                        help="bandwidth schedule: 'exponential' (default), 'linear', 'cosine', or 'inverse')")
+    parser.add_argument('--bandwidth_init_scale', default=2.0, type=float,
+                        help='initial multiplier for base bandwidth (coarse stage)')
+    parser.add_argument('--bandwidth_final_scale', default=0.8, type=float,
+                        help='final multiplier for base bandwidth (fine stage)')
     
     main()
