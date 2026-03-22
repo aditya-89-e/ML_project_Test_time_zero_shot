@@ -9,6 +9,8 @@ Authors:
 This is the official GitHub repository for our paper accepted at CVPR '24. 
 This work introduces the MeanShift Test-time Augmentation (MTA) method, leveraging Vision-Language models without the necessity for prompt learning. Our method randomly augments a single image into N augmented views, then alternates between two key steps (see [mta.py](mta.py) and [Details on the code](#details-on-the-code) section.):
 
+Structured stochastic occlusion is now available as an additional view generator on top of RandomResizedCrop. It creates multiple partially occluded views using random circular/elliptical/square masks, where mask centers are sampled uniformly and radii are sampled from a low-variance Gaussian.
+
 ### 1. Computing a Score for Each Augmented View
 
 This step involves calculating a score for each augmented view to assess its relevance and quality (inlierness score).
@@ -51,6 +53,25 @@ Or the 15 datasets at once:
 python main.py --data /path/to/your/data --mta --test_sets I/A/R/V/K/DTD/Flower102/Food101/Cars/SUN397/Aircraft/Pets/Caltech101/UCF101/eurosat --seed 1
 ```
 
+### Running MTA with Stochastic Occlusion
+
+The command below appends additional structured occlusion views to the usual RandomResizedCrop views used by MTA:
+
+```bash
+python main.py --data /path/to/your/data --mta --test_sets I --seed 1 \
+  --occlusion_views 8 --occlusion_spots 3 \
+  --occlusion_radius_mean 0.08 --occlusion_radius_std 0.02 \
+  --occlusion_shape circle --occlusion_fill mean
+```
+
+Occlusion parameters:
+- `--occlusion_views`: number of extra masked views to add.
+- `--occlusion_spots`: number of mask spots per occluded view.
+- `--occlusion_radius_mean`: mean radius as a fraction of the image minimum side.
+- `--occlusion_radius_std`: radius standard deviation (keep small for low-variance sampling).
+- `--occlusion_shape`: one of `circle`, `ellipse`, `square`.
+- `--occlusion_fill`: `mean` (image mean RGB) or `zero` (black masks).
+
 ## Details on the code
 More information on the procedure in [mta.py](mta.py).
 ### Function: `gaussian_kernel`
@@ -70,6 +91,11 @@ More information on the procedure in [mta.py](mta.py).
   3. **Iterative optimization**:
      - Alternates between updating inlierness scores and the mode.
   4. **Output Calculation**: Computes the final output by cosine similarity of the final mode with the text features.
+
+### Structured Occlusion in the Augmentation Pipeline
+- Implemented in `data/datautils.py` inside `apply_structured_occlusion` and `AugMixAugmenter`.
+- For each occluded view, we first sample a RandomResizedCrop base view, then draw a configurable number of random masks.
+- This simulates partial visibility while preserving global scene structure and object identity, and it is used as an addition to RandomCrop views.
 
 ## Citation
 

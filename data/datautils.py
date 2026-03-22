@@ -1,6 +1,7 @@
 import os
 from typing import Tuple
 from PIL import Image
+from PIL import ImageDraw
 import numpy as np
 
 import torch
@@ -84,9 +85,71 @@ def augmix(image, preprocess, aug_list, severity=1):
     return mix
 
 
+def _sample_radius(image_size, radius_mean, radius_std):
+    """Sample a positive radius (in pixels) from a low-variance Gaussian."""
+    sampled = np.random.normal(loc=radius_mean, scale=radius_std)
+    min_radius = max(1.0, 0.01 * image_size)
+    max_radius = max(min_radius, 0.5 * image_size)
+    return float(np.clip(sampled, min_radius, max_radius))
+
+
+def apply_structured_occlusion(image, num_spots=3, radius_mean_ratio=0.08,
+                               radius_std_ratio=0.02, shape='circle', fill='mean'):
+    """Apply random structured masks to simulate partial visibility."""
+    occluded = image.copy()
+    width, height = occluded.size
+    min_side = float(min(width, height))
+
+    radius_mean = radius_mean_ratio * min_side
+    radius_std = radius_std_ratio * min_side
+
+    if fill == 'mean':
+        image_np = np.array(occluded, dtype=np.float32)
+        fill_color = tuple(np.mean(image_np.reshape(-1, image_np.shape[-1]), axis=0).astype(np.uint8).tolist())
+    else:
+        fill_color = (0, 0, 0)
+
+    draw = ImageDraw.Draw(occluded)
+    for _ in range(max(0, int(num_spots))):
+        center_x = np.random.uniform(0, width)
+        center_y = np.random.uniform(0, height)
+        radius = _sample_radius(min_side, radius_mean, radius_std)
+
+        if shape == 'ellipse':
+            # Slight anisotropy keeps masks realistic while preserving object-level structure.
+            radius_y = radius * np.random.uniform(0.75, 1.25)
+            bbox = [
+                center_x - radius,
+                center_y - radius_y,
+                center_x + radius,
+                center_y + radius_y,
+            ]
+            draw.ellipse(bbox, fill=fill_color)
+        elif shape == 'square':
+            bbox = [
+                center_x - radius,
+                center_y - radius,
+                center_x + radius,
+                center_y + radius,
+            ]
+            draw.rectangle(bbox, fill=fill_color)
+        else:
+            bbox = [
+                center_x - radius,
+                center_y - radius,
+                center_x + radius,
+                center_y + radius,
+            ]
+            draw.ellipse(bbox, fill=fill_color)
+
+    return occluded
+
+
 class AugMixAugmenter(object):
     def __init__(self, base_transform, preprocess, n_views=2, augmix=False, 
-                    severity=1):
+                    severity=1, occlusion_views=0, occlusion_spots=3,
+                    occlusion_radius_mean=0.08, occlusion_radius_std=0.02,
+                    occlusion_shape='circle', occlusion_fill='mean'):
         self.base_transform = base_transform
         self.preprocess = preprocess
         self.n_views = n_views
@@ -95,10 +158,28 @@ class AugMixAugmenter(object):
         else:
             self.aug_list = []
         self.severity = severity
+        self.occlusion_views = occlusion_views
+        self.occlusion_spots = occlusion_spots
+        self.occlusion_radius_mean = occlusion_radius_mean
+        self.occlusion_radius_std = occlusion_radius_std
+        self.occlusion_shape = occlusion_shape
+        self.occlusion_fill = occlusion_fill
         
     def __call__(self, x):
         image = self.preprocess(self.base_transform(x))
         views = [augmix(x, self.preprocess, self.aug_list, self.severity) for _ in range(self.n_views)]
+        for _ in range(self.occlusion_views):
+            # Keep RandomResizedCrop as the base view generator, then add structured masking.
+            base_view = get_preaugment()(x)
+            occluded_view = apply_structured_occlusion(
+                base_view,
+                num_spots=self.occlusion_spots,
+                radius_mean_ratio=self.occlusion_radius_mean,
+                radius_std_ratio=self.occlusion_radius_std,
+                shape=self.occlusion_shape,
+                fill=self.occlusion_fill,
+            )
+            views.append(self.preprocess(occluded_view))
         return [image] + views
 
 

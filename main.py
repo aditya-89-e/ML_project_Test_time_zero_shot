@@ -170,7 +170,13 @@ def main_worker(gpu, args):
                 transforms.ToTensor(),
                 normalize])
             data_transform = AugMixAugmenter(base_transform, preprocess, n_views=args.batch_size-1, 
-                                            augmix=(len(set_id)>1 and args.tpt))
+                                            augmix=(len(set_id)>1 and args.tpt),
+                                            occlusion_views=args.occlusion_views,
+                                            occlusion_spots=args.occlusion_spots,
+                                            occlusion_radius_mean=args.occlusion_radius_mean,
+                                            occlusion_radius_std=args.occlusion_radius_std,
+                                            occlusion_shape=args.occlusion_shape,
+                                            occlusion_fill=args.occlusion_fill)
             batchsize = 1
         else:
             data_transform = transforms.Compose([
@@ -345,5 +351,21 @@ if __name__ == '__main__':
     parser.add_argument('--mta', action='store_true', default=False, help='run meanshift test-time adaptation (MTA)')
     parser.add_argument('--lambda_q', default=4, help='quadratic term weighting factor')
     parser.add_argument('--lambda_y', default=0.2, help='entropic term weighting factor')
+
+    # Stochastic occlusion arguments (additional masked views for MTA/TPT)
+    parser.add_argument('--occlusion_views', default=0, type=int,
+                        help='number of extra stochastic-occlusion views to append')
+    parser.add_argument('--occlusion_spots', default=3, type=int,
+                        help='number of random mask spots per occluded view')
+    parser.add_argument('--occlusion_radius_mean', default=0.08, type=float,
+                        help='mean radius ratio (w.r.t. image min side) for mask spots')
+    parser.add_argument('--occlusion_radius_std', default=0.02, type=float,
+                        help='std radius ratio (low variance) for mask spots')
+    parser.add_argument('--occlusion_shape', default='circle', type=str,
+                        choices=['circle', 'ellipse', 'square'],
+                        help='shape used for stochastic occlusion masks')
+    parser.add_argument('--occlusion_fill', default='mean', type=str,
+                        choices=['mean', 'zero'],
+                        help='mask fill color: image mean color or zero (black)')
     
     main()
